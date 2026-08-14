@@ -1,0 +1,4 @@
+F:\Python Project\deepseek-harness_exe\.artifacts\desktop-web\payload\Microsoft.Web.WebView2.Core.xml
+F:\Python Project\deepseek-harness_exe\.artifacts\desktop-web\payload\Microsoft.Web.WebView2.WinForms.xml
+F:\Python Project\deepseek-harness_exe\.artifacts\desktop-web\payload\Microsoft.Web.WebView2.Wpf.xml
+F:\Python Project\deepseek-harness_exe\.artifacts\desktop-web\payload\DeepSeekHarnessWeb.exe

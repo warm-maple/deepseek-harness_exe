@@ -148,6 +148,34 @@ Node 运行时与桌面端通过 UTF-8 在标准流上交换 JSON-RPC。原 AcpC
 - packages/acp/acp/src/index.ts：ACP 桥富化，新增 session/list 与 session/load（历史恢复，种子续接 + 历史回放）。
 - apps/desktop/AcpClient.cs：新增 ListSessionsAsync / LoadSessionAsync。
 - apps/desktop/MainViewModel.cs：启动恢复侧栏、点击历史会话加载与回放渲染。
+
+## 2025-08（最终版）：WebView2 方案 —— 原封不动的 Web 界面
+
+用户核心目标：把源项目 harness 的 **Web 界面原封不动**变成 exe，双击启动、不打开 cmd、功能界面不变。
+
+### 方案
+用 **Edge WebView2**（本机已装 Runtime 151.x）把原版 harness web 前端直接嵌进 WPF 壳：
+
+- `apps/desktop-web/DeepSeekHarnessWeb.csproj`：WinExe + WebView2（NuGet `Microsoft.Web.WebView2 1.0.4129.50`）。
+- 双击 exe → 壳自动找空闲端口 → 启动内置 node 运行原版 `dsh web --port <port>`（`node_modules/@deepseek-ai/dsh/lib/bin.js web`）→ 轮询就绪 → WebView2 加载 `http://127.0.0.1:<port>` → 关闭窗口自动 `taskkill /T /F` 结束整棵 node 进程树。
+- **界面、功能 100% 是原版 harness web**（消息、Markdown、工具、预设、设置、API Key onboarding 都在 web 端，WPF 只做壳）。
+- 会话/凭据持久化到 `%APPDATA%\DeepSeekHarness`（DSH_HOME）。
+
+### 运行时打包（原版 web 运行时，独立可运行）
+- 在源项目 `E:\deepseek-harness_exe-master`（完整源码）执行：
+  `pnpm install`、`pnpm run build:lib:host`、`pnpm run build:lib:client`、`pnpm run build:web`。
+- `distribution/web-runtime/package.json`（166 个顶层 workspace 依赖）通过
+  `pnpm --filter dsh-web-runtime deploy --legacy --prod` 物化到 `.web-runtime`（约 200MB），
+  再补齐 peer 依赖包 lib（deploy 默认跳过 peers，37 个）、复制 `apps/cli`（@deepseek-ai/dsh）、
+  `apps/web/dist`（前端）、`node.exe`。
+- 已验证：独立运行时启动原版 web，HTTP 200、boot manifest 完整；WebView2 壳加载成功。
+
+### 构建与运行
+- 便携版：`.artifacts/desktop-web/payload/DeepSeekHarnessWeb.exe`（连同 `runtime` 文件夹）。
+- 单文件安装包：`.artifacts/desktop-web/DeepSeekHarnessWeb-Setup-0.2.0-x64.exe`（110MB，Inno Setup；默认装到 %LOCALAPPDATA%\Programs\DeepSeek Harness）。
+- 应用图标：`apps/desktop-web/app.ico`（由用户提供 PNG 转多尺寸 ICO；exe 图标经 ApplicationIcon 嵌入，窗口图标经 AppContext.BaseDirectory 加载）。
+- 构建：`dotnet publish apps/desktop-web/DeepSeekHarnessWeb.csproj -c Release -r win-x64 --self-contained true -o .artifacts/desktop-web/payload`，再把 `.web-runtime` 复制为 `payload/runtime`。
+
 ## 构建方法
 
 在 Windows x64 的仓库根目录执行：

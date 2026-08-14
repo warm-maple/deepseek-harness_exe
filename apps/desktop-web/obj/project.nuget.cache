@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "dgSpecHash": "3ChqgrnXOeA=",
+  "success": true,
+  "projectFilePath": "F:\\Python Project\\deepseek-harness_exe\\apps\\desktop-web\\DeepSeekHarnessWeb.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.30\\microsoft.net.illink.tasks.8.0.30.nupkg.sha512",
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.web.webview2\\1.0.4129.50\\microsoft.web.webview2.1.0.4129.50.nupkg.sha512",
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.30\\microsoft.netcore.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.30\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.30\\microsoft.aspnetcore.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\warm maple\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.30\\microsoft.netcore.app.crossgen2.win-x64.8.0.30.nupkg.sha512"
+  ],
+  "logs": []
+}

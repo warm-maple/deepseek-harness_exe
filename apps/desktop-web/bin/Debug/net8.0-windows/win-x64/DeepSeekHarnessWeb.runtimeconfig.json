@@ -1,0 +1,18 @@
+{
+  "runtimeOptions": {
+    "tfm": "net8.0",
+    "includedFrameworks": [
+      {
+        "name": "Microsoft.NETCore.App",
+        "version": "8.0.30"
+      },
+      {
+        "name": "Microsoft.WindowsDesktop.App",
+        "version": "8.0.30"
+      }
+    ],
+    "configProperties": {
+      "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": true
+    }
+  }
+}

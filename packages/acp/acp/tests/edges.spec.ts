@@ -57,8 +57,13 @@ describe('ACP automation output boundary', () => {
         : []
     )).join('')
     expect(text).toBe('done')
-    // Terminal, plan, title, and usage stay off the wire.
-    for (const banned of ['terminal', 'plan', 'plan_update', 'plan_removed', 'session_info_update', 'usage_update']) {
+    // The DSH stats line rides a standard usage_update with _meta['dsh:stats'].
+    const usage = harness.updates.find(update => update.sessionUpdate === 'usage_update')
+    expect(usage).toBeDefined()
+    expect(usage).toMatchObject({ sessionUpdate: 'usage_update' })
+    expect((usage as { _meta?: Record<string, unknown> })._meta?.['dsh:stats']).toBeDefined()
+    // Terminal, plan, title, and session-info stay off the wire.
+    for (const banned of ['terminal', 'plan', 'plan_update', 'plan_removed', 'session_info_update']) {
       expect(harness.updates.some(update => update.sessionUpdate === banned)).toBe(false)
     }
   })

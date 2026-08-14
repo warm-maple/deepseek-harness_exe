@@ -168,6 +168,7 @@ public sealed class Conversation : NotifyObject
     private string? _sessionId;
     private string? _persistedId;
     private bool _isRunning;
+    private string _statsLine = string.Empty;
 
     public Conversation(string workspace)
     {
@@ -198,6 +199,13 @@ public sealed class Conversation : NotifyObject
 
     /// <summary>是否为待恢复的历史会话（有持久化 id 但尚未加载）。</summary>
     public bool NeedsRestore => _persistedId is not null && _sessionId is null;
+
+    /// <summary>统计行（轮数/步数、耗时、首字延迟、缓存命中、token 用量），web StatsLine 风格。</summary>
+    public string StatsLine
+    {
+        get => _statsLine;
+        set => SetField(ref _statsLine, value);
+    }
 
     public bool IsRunning
     {

@@ -233,7 +233,7 @@
       <Grid Grid.Row="2">
         <!-- 空状态 Hero（web hero：标题 + 工作区 chip + 输入卡 + 底部操作行） -->
         <Grid Visibility="{Binding HasMessages, Converter={StaticResource InverseBoolToVisibility}}">
-          <StackPanel MaxWidth="820" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40,84,40,0">
+          <StackPanel MaxWidth="920" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40,84,40,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="🪸" FontSize="30" Margin="0,0,10,0" />
               <TextBlock Text="DeepSeek Harness" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -259,7 +259,23 @@
               </Grid>
             </Border>
             <Grid Margin="4,12,4,0">
-              <TextBlock Text="按 Enter 发送" Foreground="{StaticResource FaintTextBrush}" FontSize="12" VerticalAlignment="Center" />
+              <Button Click="PermissionMode_Click" Style="{StaticResource SecondaryButtonStyle}" Padding="10,5"
+                      Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                      HorizontalAlignment="Left" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="🔒" FontSize="11" />
+                  <TextBlock Text="{Binding PermissionLabel}" FontSize="12" Margin="6,0,0,0" Foreground="{StaticResource TextSecondaryBrush}" />
+                  <TextBlock Text="▾" FontSize="10" Foreground="{StaticResource FaintTextBrush}" Margin="6,1,0,0" />
+                </StackPanel>
+                <Button.ContextMenu>
+                  <ContextMenu>
+                    <MenuItem Header="工作区写入（Workspace Write）" Tag="workspace-write" Click="PermissionMenuItem_Click" />
+                    <MenuItem Header="只读（Read Only）" Tag="read-only" Click="PermissionMenuItem_Click" />
+                    <MenuItem Header="完全访问（Full Access）" Tag="danger-full-access" Click="PermissionMenuItem_Click" />
+                  </ContextMenu>
+                </Button.ContextMenu>
+              </Button>
+              <TextBlock Text="按 Enter 发送" Foreground="{StaticResource FaintTextBrush}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center" />
               <Button Content="发送" Style="{StaticResource PrimaryButtonStyle}" Click="Send_Click"
                       IsEnabled="{Binding CanSend}" MinWidth="88" HorizontalAlignment="Right" />
             </Grid>
@@ -282,16 +298,24 @@
       </Grid>
 
       <!-- 底部输入区（有会话时） -->
-      <Border Grid.Row="3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="24,14"
+      <Border Grid.Row="3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="24,10"
               Background="{StaticResource WindowBrush}"
               Visibility="{Binding HasMessages, Converter={StaticResource BoolToVisibility}}">
-        <Grid MaxWidth="780">
+        <Grid MaxWidth="920">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
+
+          <!-- 统计行（web StatsLine：轮数/步数、耗时、首字延迟、缓存命中、token 用量） -->
+          <TextBlock Text="{Binding SelectedConversation.StatsLine}" FontSize="11"
+                     Foreground="{StaticResource FaintTextBrush}" Margin="4,0,4,6"
+                     TextTrimming="CharacterEllipsis"
+                     Visibility="{Binding SelectedConversation.StatsLine, Converter={StaticResource NotEmptyToVisibility}}" />
+
           <Border BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1" CornerRadius="16"
-                  Background="{StaticResource WindowBrush}">
+                  Background="{StaticResource WindowBrush}" Grid.Row="1">
             <Grid>
               <TextBox x:Name="PromptBox" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                        MinHeight="60" MaxHeight="200" AcceptsReturn="True" TextWrapping="Wrap"
@@ -302,8 +326,27 @@
                          Visibility="{Binding InputText, Converter={StaticResource StringEmptyToVisibility}}" />
             </Grid>
           </Border>
-          <Grid Grid.Row="1" Margin="4,8,2,0">
-            <TextBlock Text="Ctrl + Enter 发送" Foreground="{StaticResource FaintTextBrush}" FontSize="11" VerticalAlignment="Center" />
+
+          <Grid Grid.Row="2" Margin="4,8,2,0">
+            <!-- 权限模式选择器（web Access mode） -->
+            <Button Click="PermissionMode_Click" Style="{StaticResource SecondaryButtonStyle}" Padding="10,5"
+                    Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    HorizontalAlignment="Left" VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="🔒" FontSize="11" />
+                <TextBlock Text="{Binding PermissionLabel}" FontSize="12" Margin="6,0,0,0" Foreground="{StaticResource TextSecondaryBrush}" />
+                <TextBlock Text="▾" FontSize="10" Foreground="{StaticResource FaintTextBrush}" Margin="6,1,0,0" />
+              </StackPanel>
+              <Button.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="工作区写入（Workspace Write）" Tag="workspace-write" Click="PermissionMenuItem_Click" />
+                  <MenuItem Header="只读（Read Only）" Tag="read-only" Click="PermissionMenuItem_Click" />
+                  <MenuItem Header="完全访问（Full Access）" Tag="danger-full-access" Click="PermissionMenuItem_Click" />
+                </ContextMenu>
+              </Button.ContextMenu>
+            </Button>
+            <TextBlock Text="Ctrl + Enter 发送" Foreground="{StaticResource FaintTextBrush}" FontSize="11"
+                       VerticalAlignment="Center" HorizontalAlignment="Center" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
               <Button Content="停止" Style="{StaticResource DangerButtonStyle}" Click="Stop_Click"
                       IsEnabled="{Binding CanStop}" Visibility="{Binding CanStop, Converter={StaticResource BoolToVisibility}}"

@@ -326,6 +326,9 @@ public sealed class MainViewModel : NotifyObject, IAsyncDisposable
             : null;
         switch (type)
         {
+            case "usage_update":
+                HandleUsageUpdate(sessionId, update);
+                break;
             case "user_message_chunk":
                 HandleUserChunk(sessionId, update);
                 break;
@@ -343,6 +346,93 @@ public sealed class MainViewModel : NotifyObject, IAsyncDisposable
                 break;
         }
     }
+
+    /// <summary>处理 usage_update：刷新统计行（web StatsLine 风格）。</summary>
+    private void HandleUsageUpdate(string sessionId, JsonElement update)
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            var conversation = FindConversation(sessionId);
+            if (conversation is null) return;
+            conversation.StatsLine = BuildStatsLine(update);
+        });
+    }
+
+    /// <summary>把 usage_update 解析为 web 风格统计行："N 轮 · M 步 | LLM … · 工具调用 … | 平均首字延迟 … · … tok/s | 缓存命中 …% | 输入 …K · 输出 …"。</summary>
+    private static string BuildStatsLine(JsonElement update)
+    {
+        int turns = 0, steps = 0;
+        double llmMs = 0, toolMs = 0, ttftMs = 0, decodeMs = 0;
+        int ttftSteps = 0, decodeTokens = 0;
+        double? cacheHit = null;
+        if (update.TryGetProperty("_meta", out var meta)
+            && meta.TryGetProperty("dsh:stats", out var stats))
+        {
+            turns = GetInt(stats, "turns");
+            steps = GetInt(stats, "steps");
+            llmMs = GetDouble(stats, "llmMs");
+            toolMs = GetDouble(stats, "toolMs");
+            ttftMs = GetDouble(stats, "ttftMs");
+            ttftSteps = GetInt(stats, "ttftSteps");
+            decodeMs = GetDouble(stats, "decodeMs");
+            decodeTokens = GetInt(stats, "decodeTokens");
+            cacheHit = stats.TryGetProperty("cacheHitPercent", out var ch) && ch.ValueKind == JsonValueKind.Number
+                ? ch.GetDouble()
+                : null;
+        }
+        long input = 0, output = 0;
+        if (update.TryGetProperty("_meta", out var metaForUsage)
+            && metaForUsage.TryGetProperty("dsh:stats", out var statsForUsage))
+        {
+            input = GetLong(statsForUsage, "inputTokens") + GetLong(statsForUsage, "cacheReadTokens") + GetLong(statsForUsage, "cacheWriteTokens");
+            output = GetLong(statsForUsage, "outputTokens");
+        }
+
+        var groups = new List<string>();
+        if (steps > 0)
+        {
+            groups.Add($"{turns} 轮 · {steps} 步");
+            var durations = new List<string>();
+            if (llmMs > 0) durations.Add($"LLM {FormatDuration(llmMs)}");
+            if (toolMs > 0) durations.Add($"工具调用 {FormatDuration(toolMs)}");
+            if (durations.Count > 0) groups.Add(string.Join(" · ", durations));
+            var speeds = new List<string>();
+            if (ttftSteps > 0) speeds.Add($"平均首字延迟 {FormatDuration(ttftMs / ttftSteps)}");
+            if (decodeMs > 0) speeds.Add($"{FormatTokensPerSecond(decodeTokens / (decodeMs / 1000.0))} tok/s");
+            if (speeds.Count > 0) groups.Add(string.Join(" · ", speeds));
+        }
+        if (cacheHit is not null) groups.Add($"缓存命中 {cacheHit.Value:0}%");
+        if (input > 0 || output > 0) groups.Add($"输入 {FormatTokens(input)} · 输出 {FormatTokens(output)}");
+        return groups.Count > 0 ? string.Join(" | ", groups) : string.Empty;
+    }
+
+    private static int GetInt(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? (int)Math.Round(p.GetDouble()) : 0;
+
+    private static long GetLong(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? (long)Math.Round(p.GetDouble()) : 0;
+
+    private static double GetDouble(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDouble() : 0;
+
+    private static string FormatDuration(double ms)
+    {
+        var s = ms / 1000.0;
+        if (s < 60) return $"{Math.Round(s * 10) / 10.0:0.#}s";
+        var whole = (int)Math.Round(s);
+        return $"{whole / 60}m{whole % 60}s";
+    }
+
+    private static string FormatTokens(long n)
+    {
+        string Scaled(double v) => v >= 100 ? Math.Round(v).ToString() : (Math.Round(v * 10) / 10.0).ToString("0.#");
+        if (n < 1000) return n.ToString();
+        if (n < 1_000_000) return Scaled(n / 1000.0) + "K";
+        return Scaled(n / 1_000_000.0) + "M";
+    }
+
+    private static string FormatTokensPerSecond(double tps) =>
+        tps >= 100 ? Math.Round(tps).ToString() : (Math.Round(tps * 10) / 10.0).ToString("0.#");
 
     private void HandleUserChunk(string sessionId, JsonElement update)
     {

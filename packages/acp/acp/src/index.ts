@@ -94,6 +94,31 @@ interface SessionRecord {
   agent: Agent
   /** Exact owned-agent disposer; resolves after registry, loop, and session teardown. */
   dispose: () => Promise<void>
+  /** Cumulative session statistics for the usage/stats line (DSH extension). */
+  stats: {
+    turns: number
+    steps: number
+    /** Summed request wall time (step/start → assistant/message). */
+    llmMs: number
+    /** Summed tool wall time (tool/call → tool/result). */
+    toolMs: number
+    /** Summed first-token latency and the steps carrying it. */
+    ttftMs: number
+    ttftSteps: number
+    /** Summed decode wall time over steps that also report output tokens. */
+    decodeMs: number
+    decodeTokens: number
+    /** Accumulated billed usage from assistant/message usage records. */
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    reasoningTokens: number
+    /** Step-start / first-chunk / tool-start timestamps for the open window. */
+    stepStart: Map<string, number>
+    firstChunk: Map<string, number>
+    toolStart: Map<string, number>
+  }
   /** In-flight prompt and its captured turn number for exact settlement. */
   inflight: {
     resolve: (reason: StopReason) => void
@@ -108,6 +133,69 @@ interface SessionRecord {
 /** Stable message id for one step's text and reasoning deltas. */
 function stepMessageId(turn: number, step: number): string {
   return `msg:${turn}:${step}`
+}
+
+/** Fresh per-session statistics accumulator. */
+function freshStats(): SessionRecord['stats'] {
+  return {
+    turns: 0,
+    steps: 0,
+    llmMs: 0,
+    toolMs: 0,
+    ttftMs: 0,
+    ttftSteps: 0,
+    decodeMs: 0,
+    decodeTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    stepStart: new Map(),
+    firstChunk: new Map(),
+    toolStart: new Map(),
+  }
+}
+
+/**
+ * Emit the cumulative session usage plus the DSH stats extension after a
+ * turn settles, so the desktop shell can render the web-style stats line
+ * (turns, steps, LLM/tool wall time, TTFT, tokens, cache-hit percent).
+ * @param record - the session record carrying accumulated statistics.
+ */
+function emitStats(record: SessionRecord, notify: (n: SessionNotification) => void): void {
+  const { stats } = record
+  const billedInput = stats.inputTokens + stats.cacheReadTokens + stats.cacheWriteTokens
+  const cachePercent = billedInput === 0 ? undefined : Math.round((stats.cacheReadTokens / billedInput) * 100)
+  notify({
+    sessionId: record.agent.session.id,
+    update: {
+      sessionUpdate: 'usage_update',
+      // The ACP UsageUpdate schema only carries context size/used; the full
+      // DSH stats (wall times, TTFT, tokens, cache hit) ride _meta so SDK
+      // clients keep parsing while the desktop shell renders the stats line.
+      _meta: {
+        'dsh:stats': {
+          turns: stats.turns,
+          steps: stats.steps,
+          llmMs: stats.llmMs,
+          toolMs: stats.toolMs,
+          ttftMs: stats.ttftMs,
+          ttftSteps: stats.ttftSteps,
+          decodeMs: stats.decodeMs,
+          decodeTokens: stats.decodeTokens,
+          cacheHitPercent: cachePercent,
+          inputTokens: stats.inputTokens,
+          outputTokens: stats.outputTokens,
+          cacheReadTokens: stats.cacheReadTokens,
+          cacheWriteTokens: stats.cacheWriteTokens,
+          reasoningTokens: stats.reasoningTokens,
+        },
+      },
+      size: 0,
+      used: 0,
+    },
+  })
 }
 
 /**
@@ -346,6 +434,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
           const { turn, step, chunk } = event.data
           const stepKey = `${sessionId}:${turn}:${step}`
           if (chunk.type === 'text-delta' && chunk.text.length > 0) {
+            if (!record.stats.firstChunk.has(stepKey)) record.stats.firstChunk.set(stepKey, event.time)
             streamedTextSteps.add(stepKey)
             notify({
               sessionId,
@@ -369,8 +458,28 @@ export function apply(ctx: Context, config: AcpConfig): void {
           break
         }
         case 'assistant/message': {
-          const { turn, step, message } = event.data
+          const { turn, step, message, usage } = event.data
           const stepKey = `${sessionId}:${turn}:${step}`
+          // Step wall time and first-token latency (TTFT).
+          const startedAt = record.stats.stepStart.get(stepKey)
+          if (startedAt !== undefined) record.stats.llmMs += Math.max(0, event.time - startedAt)
+          const firstChunkAt = record.stats.firstChunk.get(stepKey)
+          if (firstChunkAt !== undefined && startedAt !== undefined) {
+            record.stats.ttftMs += Math.max(0, firstChunkAt - startedAt)
+            record.stats.ttftSteps += 1
+          }
+          if (firstChunkAt !== undefined && usage !== undefined) {
+            record.stats.decodeMs += Math.max(0, event.time - firstChunkAt)
+            record.stats.decodeTokens += usage.outputTokens
+          }
+          record.stats.steps += 1
+          if (usage !== undefined) {
+            record.stats.inputTokens += usage.inputTokens
+            record.stats.outputTokens += usage.outputTokens
+            record.stats.cacheReadTokens += usage.cacheReadTokens ?? 0
+            record.stats.cacheWriteTokens += usage.cacheWriteTokens ?? 0
+            record.stats.reasoningTokens += usage.reasoningTokens ?? 0
+          }
           const streamedText = streamedTextSteps.has(stepKey)
           const streamedReasoning = streamedReasoningSteps.has(stepKey)
           for (const block of message.content) {
@@ -409,6 +518,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
           break
         }
         case 'tool/call': {
+          record.stats.toolStart.set(event.data.callId, event.time)
           notify({
             sessionId,
             update: {
@@ -425,6 +535,9 @@ export function apply(ctx: Context, config: AcpConfig): void {
         case 'tool/result': {
           const block = event.data.message.content[0]
           const text = toolResultText(block.content)
+          const toolStartedAt = record.stats.toolStart.get(block.toolCallId)
+          if (toolStartedAt !== undefined) record.stats.toolMs += Math.max(0, event.time - toolStartedAt)
+          record.stats.toolStart.delete(block.toolCallId)
           notify({
             sessionId,
             update: {
@@ -450,10 +563,26 @@ export function apply(ctx: Context, config: AcpConfig): void {
           })
           break
         }
+        case 'step/start': {
+          record.stats.stepStart.set(`${sessionId}:${event.data.turn}:${event.data.step}`, event.time)
+          break
+        }
+        case 'turn/start': {
+          record.stats.turns += 1
+          break
+        }
         default:
           break
       }
     } finally {
+      if (event.type === 'turn/end') {
+        // Prune the finished turn's step/tool timing windows and report the
+        // cumulative usage + stats line to the desktop shell.
+        const prefix = `${sessionId}:${event.data.turn}:`
+        for (const key of record.stats.stepStart) if (key[0].startsWith(prefix)) record.stats.stepStart.delete(key[0])
+        for (const key of record.stats.firstChunk) if (key[0].startsWith(prefix)) record.stats.firstChunk.delete(key[0])
+        emitStats(record, notify)
+      }
       const inflight = record.inflight
       if (inflight !== undefined && event.type === 'turn/end' && inflight.turn === event.data.turn) {
         // Prune both per-step streaming markers for this session's finished turn.
@@ -553,6 +682,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
           agent: handle.agent,
           dispose: () => handle.dispose(),
           inflight: undefined,
+          stats: freshStats(),
         })
         return { sessionId }
       },
@@ -609,6 +739,7 @@ export function apply(ctx: Context, config: AcpConfig): void {
           agent: handle.agent,
           dispose: () => handle.dispose(),
           inflight: undefined,
+          stats: freshStats(),
         }
         sessions.set(sessionId, record)
         // Replay history under the requested id so the client can render it

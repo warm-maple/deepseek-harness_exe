@@ -23,7 +23,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Files]
-Source: "C:\dshpkg\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.map,*.d.ts,*.d.mts,*.d.cts,*.tsbuildinfo,*.snap,*.test.js,*.spec.js,*.md,*.markdown"
+Source: "C:\dshpkg\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "DeepSeekHarnessWeb.exe.WebView2\*,*.map,*.d.ts,*.d.mts,*.d.cts,*.tsbuildinfo,*.snap,*.test.js,*.spec.js,*.md,*.markdown"
 
 [Icons]
 Name: "{autoprograms}\DeepSeek Harness"; Filename: "{app}\DeepSeekHarnessWeb.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"

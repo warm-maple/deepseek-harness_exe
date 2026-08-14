@@ -14,11 +14,11 @@
 
 ## 桌面组合
 
-已交付的产品是 [`apps/desktop`](../apps/desktop/README.md) 下的原生 Windows x64 应用。其 WPF 进程负责人机交互，并以隐藏子进程方式启动内置 Node 运行时。两个进程通过重定向标准输入输出交换 ACP JSON-RPC；HTTP 服务、浏览器、端口和 CLI 启动器都不参与。
+已交付的产品是 [`apps/desktop-web`](../apps/desktop-web/README.md) 下的 Windows x64 应用。其自包含 WPF 进程会以隐藏子进程方式启动内置 Node 运行时，并在 WebView2 中嵌入原版 Web 界面。Node 会绑定一个临时回环端口，通过 stdout 公告 URL，再向应用窗口内的浏览器客户端提供服务。
 
-[`apps/desktop/runtime/cordis.yml`](../apps/desktop/runtime/cordis.yml) 是可直接阅读的部署组合。它挂载 DeepSeek 适配器、ACP Agent 组合包、Windows 沙箱与 PowerShell 执行器、文件与搜索工具、持久化、上下文压缩、子 Agent、工作流、目标、后台任务和权限服务。ACP 为每个桌面任务创建一个有作用域的 Agent。
+Node 子进程启动普通的 `dsh web` 组合，因此桌面产品会保留 Web 客户端的界面、引导流程、设置和 agent 能力，而不维护第二套客户端协议。WPF 外壳只负责启动运行时、探测就绪状态、导航 WebView2 和关闭进程树。
 
-WPF 外壳把 API Key 存入 Windows 凭据管理器，并且只通过隐藏运行时的环境传入。运行时文件和 JSONL 会话数据位于每用户应用目录。安装程序包含自包含 .NET 应用、`node.exe` 和不含符号链接的已部署包闭包。
+会话与凭据保存在 `%APPDATA%\DeepSeekHarness` 下，WebView2 浏览器数据保存在 `%LOCALAPPDATA%\DeepSeekHarness\WebView2` 下。安装器包含自包含 .NET 外壳、`node.exe` 和不含符号链接的已部署包闭包，并排除组装安装器时产生的浏览器数据。
 
 可复用的组合包和 profile 包继续作为示例与 SDK 消费方使用的后端组装工具；在这个 fork 中，它们不再是产品启动界面。组装机制见 [app-boot](../packages/boot/app-boot/README.md#profiles)，配置字段见生成的[配置目录](config-catalog.md)。
 

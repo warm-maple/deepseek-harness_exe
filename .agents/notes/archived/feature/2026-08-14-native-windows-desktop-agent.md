@@ -1,6 +1,7 @@
 # Agent Note: Native Windows desktop Agent
 
 Status: implemented
+Archived: 2026-08-14
 
 English | [中文](2026-08-14-native-windows-desktop-agent.zh.md)
 

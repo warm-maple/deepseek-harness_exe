@@ -2,9 +2,12 @@
  * Automation-only Agent Client Protocol server over JSON-RPC stdio.
  *
  * The bridge exposes fresh harness sessions to trusted programmatic clients. It
- * carries prompt text, committed assistant text, cancellation, and one-shot
- * permission decisions; presentation and human-interaction features stay with
- * the harness's UI modules.
+ * carries prompt text, live assistant text and reasoning deltas, tool cards,
+ * todo snapshots, cancellation, and one-shot permission decisions. Text and
+ * reasoning deltas ride agent_message_chunk/agent_thought_chunk, tools ride
+ * tool_call/tool_call_update, and todos ride the reserved _meta of a thought
+ * chunk because ACP has no standard todo update type. SDK clients that ignore
+ * unknown content continue to aggregate text unchanged.
  *
  * @module @deepseek-ai/dsh-acp
  */
@@ -25,6 +28,10 @@ import {
   type CancelNotification,
   type InitializeRequest,
   type InitializeResponse,
+  type ListSessionsRequest,
+  type ListSessionsResponse,
+  type LoadSessionRequest,
+  type LoadSessionResponse,
   type NewSessionRequest,
   type NewSessionResponse,
   type PromptRequest,
@@ -32,9 +39,10 @@ import {
   type SessionNotification,
   type StopReason,
   type Stream,
+  type ToolKind,
 } from '@agentclientprotocol/sdk'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent, type SessionHeader, type TurnEndReason } from '@deepseek-ai/dsh-session'
 // Side-effect type import: declaration-merges the approval waterfall answered below.
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { acpPromptToText, promptHasUnsupportedContent, turnEndToStopReason } from './codec.ts'
@@ -97,6 +105,44 @@ interface SessionRecord {
   } | undefined
 }
 
+/** Stable message id for one step's text and reasoning deltas. */
+function stepMessageId(turn: number, step: number): string {
+  return `msg:${turn}:${step}`
+}
+
+/**
+ * Map a DSH tool name to the closest ACP tool kind for card styling.
+ * @param name - the model-facing tool name.
+ * @returns the ACP tool-kind category.
+ */
+function toolKindFor(name: string): ToolKind {
+  const n = name.toLowerCase()
+  if (n.includes('search') || n.startsWith('grep') || n.startsWith('find')) return 'search'
+  if (n.startsWith('read') || n.startsWith('ls') || n.startsWith('cat')) return 'read'
+  if (n.startsWith('edit') || n.startsWith('write') || n.startsWith('create') || n.startsWith('append') || n.includes('replace')) return 'edit'
+  if (n.startsWith('delete') || n.startsWith('remove') || n.startsWith('rm')) return 'delete'
+  if (n.startsWith('move') || n.startsWith('rename')) return 'move'
+  if (n.startsWith('pwsh') || n.startsWith('bash') || n.startsWith('exec') || n.startsWith('run') || n.includes('terminal')) return 'execute'
+  if (n.startsWith('web') || n.includes('fetch') || n.includes('http') || n.startsWith('search')) return 'fetch'
+  if (n.includes('think')) return 'think'
+  return 'other'
+}
+
+/** Best-effort parse of a model tool-arguments JSON string; raw text on failure. */
+function parseArguments(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
+
+/** Join a tool result's text blocks into one display string. */
+function toolResultText(content: readonly { type: string; text?: string }[]): string | undefined {
+  const text = content.flatMap(block => (block.type === 'text' && block.text ? [block.text] : [])).join('\n')
+  return text.length > 0 ? text : undefined
+}
+
 /**
  * Mount the automation-only ACP server.
  * @param ctx - Cordis context carrying the agent factory and session events.
@@ -108,6 +154,11 @@ export function apply(ctx: Context, config: AcpConfig): void {
   const agents = ctx.agents
   const logger = ctx.logger
   const sessions = new Map<SessionId, SessionRecord>()
+  // Steps that already streamed text or reasoning deltas. The committed
+  // assistant/message fallback skips blocks that were streamed so clients do
+  // not double-render; entries are pruned when their turn ends.
+  const streamedTextSteps = new Set<string>()
+  const streamedReasoningSteps = new Set<string>()
   let closed = false
   let conn: AgentSideConnection
 
@@ -135,11 +186,140 @@ export function apply(ctx: Context, config: AcpConfig): void {
     })
   }
 
+  /**
+   * Optional JSONL session persistence, composed by the owning app (acp-demo).
+   * Absent when the bridge runs standalone, which makes session/list and
+   * session/load unavailable.
+   */
+  const persistence = (): {
+    list(): Promise<SessionHeader[]>
+    load(id: SessionId): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+  } | undefined => ctx.get('sessionPersistence') as {
+    list(): Promise<SessionHeader[]>
+    load(id: SessionId): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+  } | undefined
+
   const settlePrompt = (record: SessionRecord, reason: StopReason): void => {
     const inflight = record.inflight
     if (inflight === undefined) return
     record.inflight = undefined
     inflight.resolve(reason)
+  }
+
+  /**
+   * Agent preset selected by the desktop shell (DSH_DESKTOP_PRESET). Absent
+   * when unset, in which case agents keep the plain host composition.
+   */
+  const desktopPreset = (): string | undefined => {
+    const preset = process.env['DSH_DESKTOP_PRESET']
+    return preset !== undefined && preset.length > 0 ? preset : undefined
+  }
+
+  /**
+   * The factory setup that joins an agent to its selected preset. The
+   * agent-presets service is optional (composed only by apps that ship a
+   * preset roster); without it the agent runs the plain host composition.
+   * @param agentCtx - the unpublished agent scope the preset mounts into.
+   * @param presetId - the preset id to resolve and mount.
+   */
+  const joinPreset = async (agentCtx: Context, presetId: string): Promise<void> => {
+    const presets = agentCtx.get('agentPresets') as {
+      resolve(id: string | undefined): Promise<{ id: string }>
+      mount(ctx: Context, id: string): Promise<unknown>
+    } | undefined
+    if (presets === undefined) return
+    const resolved = await presets.resolve(presetId)
+    await presets.mount(agentCtx, resolved.id)
+  }
+
+  /**
+   * Replay one persisted session log as session/update notifications so the
+   * client can render history before continuing. Text, reasoning, tool cards,
+   * and todo snapshots use the same update vocabulary as the live path; the
+   * notifications carry the requested session id so the client routes them to
+   * the conversation being loaded.
+   */
+  const replayHistory = (notifySessionId: SessionId, events: readonly SessionEvent[]): void => {
+    for (const event of events) {
+      switch (event.type) {
+        case 'user/message': {
+          for (const block of event.data.content) {
+            if (block.type === 'text' && block.text.length > 0) {
+              notify({
+                sessionId: notifySessionId,
+                update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: block.text } },
+              })
+            }
+          }
+          break
+        }
+        case 'assistant/message': {
+          for (const block of event.data.message.content) {
+            if (block.type === 'text' && block.text.length > 0) {
+              notify({
+                sessionId: notifySessionId,
+                update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: block.text } },
+              })
+            } else if (block.type === 'reasoning' && block.text.length > 0) {
+              notify({
+                sessionId: notifySessionId,
+                update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: block.text } },
+              })
+            } else if (block.type === 'image') {
+              notify({
+                sessionId: notifySessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: `[image attachment ${block.attachment.attachmentId}]` },
+                },
+              })
+            }
+          }
+          break
+        }
+        case 'tool/call': {
+          notify({
+            sessionId: notifySessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: event.data.callId,
+              title: event.data.name,
+              kind: toolKindFor(event.data.name),
+              status: 'in_progress',
+              rawInput: parseArguments(event.data.arguments),
+            },
+          })
+          break
+        }
+        case 'tool/result': {
+          const block = event.data.message.content[0]
+          const text = toolResultText(block.content)
+          notify({
+            sessionId: notifySessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: block.toolCallId,
+              status: block.isError === true ? 'failed' : 'completed',
+              ...(text !== undefined ? { rawOutput: text } : {}),
+            },
+          })
+          break
+        }
+        case 'todo/write': {
+          notify({
+            sessionId: notifySessionId,
+            update: {
+              sessionUpdate: 'agent_thought_chunk',
+              content: { type: 'text', text: '' },
+              _meta: { 'dsh:todos': event.data.todos },
+            },
+          })
+          break
+        }
+        default:
+          break
+      }
+    }
   }
 
   const rejectFromError = (
@@ -149,40 +329,137 @@ export function apply(ctx: Context, config: AcpConfig): void {
     inflight.reject(internalError(`turn failed: ${reason.error.message}`))
   }
 
-  // Emit only committed assistant text. Raw chunks, reasoning, tools, plans,
-  // titles, and retry markers are presentation or trace data and stay off the
-  // automation wire.
+  // Stream committed presentation: live text and reasoning deltas, tool cards,
+  // and todo snapshots. Text and reasoning deltas ride the ACP content-chunk
+  // update types with a per-step message id; tools ride tool_call/
+  // tool_call_update; todos ride the reserved _meta of a thought chunk because
+  // ACP has no standard todo update type. The committed assistant/message
+  // fallback covers blocks that never streamed (defensive for adapters that
+  // assemble without deltas) and image placeholders, which have no delta form.
   ctx.on('session/event', (session, event: SessionEvent) => {
     const record = sessions.get(session.header.id)
     if (record === undefined || record.agent.session !== session) return
+    const sessionId = record.agent.session.id
     try {
-      if (event.type === 'assistant/message') {
-        for (const block of event.data.message.content) {
-          if (block.type === 'text' && block.text.length > 0) {
+      switch (event.type) {
+        case 'assistant/chunk': {
+          const { turn, step, chunk } = event.data
+          const stepKey = `${sessionId}:${turn}:${step}`
+          if (chunk.type === 'text-delta' && chunk.text.length > 0) {
+            streamedTextSteps.add(stepKey)
             notify({
-              sessionId: record.agent.session.id,
+              sessionId,
               update: {
                 sessionUpdate: 'agent_message_chunk',
-                content: { type: 'text', text: block.text },
+                messageId: stepMessageId(turn, step),
+                content: { type: 'text', text: chunk.text },
               },
             })
-          } else if (block.type === 'image') {
+          } else if (chunk.type === 'reasoning-delta' && chunk.text.length > 0) {
+            streamedReasoningSteps.add(stepKey)
             notify({
-              sessionId: record.agent.session.id,
+              sessionId,
               update: {
-                sessionUpdate: 'agent_message_chunk',
-                content: {
-                  type: 'text',
-                  text: `[image attachment ${block.attachment.attachmentId}]`,
-                },
+                sessionUpdate: 'agent_thought_chunk',
+                messageId: stepMessageId(turn, step),
+                content: { type: 'text', text: chunk.text },
               },
             })
           }
+          break
         }
+        case 'assistant/message': {
+          const { turn, step, message } = event.data
+          const stepKey = `${sessionId}:${turn}:${step}`
+          const streamedText = streamedTextSteps.has(stepKey)
+          const streamedReasoning = streamedReasoningSteps.has(stepKey)
+          for (const block of message.content) {
+            if (block.type === 'text' && block.text.length > 0 && !streamedText) {
+              notify({
+                sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  messageId: stepMessageId(turn, step),
+                  content: { type: 'text', text: block.text },
+                },
+              })
+            } else if (block.type === 'reasoning' && block.text.length > 0 && !streamedReasoning) {
+              notify({
+                sessionId,
+                update: {
+                  sessionUpdate: 'agent_thought_chunk',
+                  messageId: stepMessageId(turn, step),
+                  content: { type: 'text', text: block.text },
+                },
+              })
+            } else if (block.type === 'image') {
+              notify({
+                sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  messageId: stepMessageId(turn, step),
+                  content: {
+                    type: 'text',
+                    text: `[image attachment ${block.attachment.attachmentId}]`,
+                  },
+                },
+              })
+            }
+          }
+          break
+        }
+        case 'tool/call': {
+          notify({
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: event.data.callId,
+              title: event.data.name,
+              kind: toolKindFor(event.data.name),
+              status: 'in_progress',
+              rawInput: parseArguments(event.data.arguments),
+            },
+          })
+          break
+        }
+        case 'tool/result': {
+          const block = event.data.message.content[0]
+          const text = toolResultText(block.content)
+          notify({
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: block.toolCallId,
+              status: block.isError === true ? 'failed' : 'completed',
+              ...(text !== undefined ? { rawOutput: text } : {}),
+            },
+          })
+          break
+        }
+        case 'todo/write': {
+          // DSH extension: todo snapshots travel on the reserved _meta of an
+          // otherwise empty thought chunk so every ACP SDK client still parses
+          // the frame while the desktop shell renders a todo card.
+          notify({
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_thought_chunk',
+              content: { type: 'text', text: '' },
+              _meta: { 'dsh:todos': event.data.todos },
+            },
+          })
+          break
+        }
+        default:
+          break
       }
     } finally {
       const inflight = record.inflight
       if (inflight !== undefined && event.type === 'turn/end' && inflight.turn === event.data.turn) {
+        // Prune both per-step streaming markers for this session's finished turn.
+        const prefix = `${sessionId}:${event.data.turn}:`
+        for (const key of streamedTextSteps) if (key.startsWith(prefix)) streamedTextSteps.delete(key)
+        for (const key of streamedReasoningSteps) if (key.startsWith(prefix)) streamedReasoningSteps.delete(key)
         if (event.data.reason.kind === 'error') {
           // Model failures surface immediately as prompt errors; ordinary
           // endings wait for whole-agent idle below.
@@ -239,6 +516,10 @@ export function apply(ctx: Context, config: AcpConfig): void {
           agentInfo: { name: 'deepseek-harness-acp', version: '0.0.1' },
           agentCapabilities: {
             promptCapabilities: { image: false, audio: false, embeddedContext: false },
+            // Session restore is offered when the owning composition supplies
+            // JSONL persistence; the handlers reject cleanly without it.
+            loadSession: true,
+            listSessions: true,
           },
           authMethods: [],
         })
@@ -256,10 +537,12 @@ export function apply(ctx: Context, config: AcpConfig): void {
         // the host plane, so this agent reads them from the global layer. A
         // deployment that configures a roster has to join one here first
         // (@deepseek-ai/dsh-agent-presets README, "Composing a child agent").
+        const presetId = desktopPreset()
         const handle = await agents.create({
           sessionId,
-          meta: { cwd: params.cwd },
+          meta: { cwd: params.cwd, ...(presetId !== undefined ? { agentPreset: presetId } : {}) },
           agentOptions: agentOptions(config),
+          ...(presetId !== undefined ? { setup: (agentCtx: Context) => joinPreset(agentCtx, presetId) } : {}),
         })
         /* v8 ignore next 4 -- a real stdio close can race an in-flight create. */
         if (closed) {
@@ -272,6 +555,69 @@ export function apply(ctx: Context, config: AcpConfig): void {
           inflight: undefined,
         })
         return { sessionId }
+      },
+
+      async listSessions(_params: ListSessionsRequest): Promise<ListSessionsResponse> {
+        assertOpen()
+        const store = persistence()
+        if (store === undefined) throw internalError('session persistence is not configured')
+        const headers = await store.list()
+        return {
+          sessions: headers
+            .filter(header => header.origin !== 'subagent')
+            .map(header => ({
+              sessionId: header.id,
+              cwd: header.cwd ?? process.cwd(),
+              ...(header.createdAt !== undefined ? { updatedAt: new Date(header.createdAt).toISOString() } : {}),
+            })),
+        }
+      },
+
+      async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+        assertOpen()
+        const store = persistence()
+        if (store === undefined) throw internalError('session persistence is not configured')
+        const persistedId = SessionId(params.sessionId)
+        const loaded = await store.load(persistedId)
+        // Resume as a fresh agent seeded with the persisted log (fork
+        // semantics): the original artifact stays untouched and the continued
+        // conversation gets a new id, which the response echoes back.
+        const sessionId = SessionId(randomUUID())
+        // The desktop's current mode wins over the restored session's original
+        // preset so the shell behavior matches the user's active selection.
+        const presetId = desktopPreset() ?? loaded.meta.agentPreset
+        const handle = await agents.create({
+          sessionId,
+          meta: {
+            ...(loaded.meta.cwd !== undefined ? { cwd: loaded.meta.cwd } : {}),
+            ...(loaded.meta.parentSession !== undefined ? { parentSession: loaded.meta.parentSession } : {}),
+            ...(loaded.meta.origin !== undefined ? { origin: loaded.meta.origin } : {}),
+            ...(loaded.meta.delegationDepth !== undefined ? { delegationDepth: loaded.meta.delegationDepth } : {}),
+            ...(presetId !== undefined ? { agentPreset: presetId } : {}),
+            seedLength: loaded.events.length,
+          },
+          seed: [...loaded.events],
+          agentOptions: agentOptions(config),
+          ...(presetId !== undefined ? { setup: (agentCtx: Context) => joinPreset(agentCtx, presetId) } : {}),
+        })
+        /* v8 ignore next 4 -- a real stdio close can race an in-flight create. */
+        if (closed) {
+          await handle.dispose()
+          throw internalError('connection closed during session/load')
+        }
+        const record: SessionRecord = {
+          agent: handle.agent,
+          dispose: () => handle.dispose(),
+          inflight: undefined,
+        }
+        sessions.set(sessionId, record)
+        // Replay history under the requested id so the client can render it
+        // before the response resolves and route it to the loading conversation.
+        replayHistory(persistedId, loaded.events)
+        // DSH extension: the LoadSessionResponse schema has no session id
+        // field, so the resumed id rides a top-level extra member the desktop
+        // shell reads; SDK clients ignore unknown response fields.
+        return { sessionId } as unknown as LoadSessionResponse
       },
 
       async prompt(params: PromptRequest): Promise<PromptResponse> {

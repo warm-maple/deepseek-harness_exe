@@ -38,3 +38,7 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+
+# WPF 桌面构建产物
+apps/desktop/bin/
+apps/desktop/obj/

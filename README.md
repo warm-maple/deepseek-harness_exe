@@ -10,29 +10,20 @@ It uses an architecture where **everything is a plugin**, and is powered by [Cor
 
 DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
 
-## Run
+## Windows desktop app
 
-### Run from `npm`
+This fork ships DeepSeek Harness as a native Windows x64 desktop Agent. It does not start a browser, HTTP server, or visible command window. The bundled background runtime communicates with the WPF application over ACP JSON-RPC stdio.
 
-Install `Node.js`, then run:
+Install the current build with `.artifacts/desktop/DeepSeekHarness-Setup-0.1.0-x64.exe`. On first launch, open Settings, save a DeepSeek API key, choose a workspace, and start a task. The key is stored in Windows Credential Manager.
 
-```sh
-npx @deepseek-ai/dsh web
-```
+To rebuild the self-contained application and installer:
 
-The command starts the Web UI, served at `http://127.0.0.1:3080` by default. See [Web UI guide](docs/user/guide/index.md).
-
-### Run from source
-
-To run from a repository checkout:
-
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
+```powershell
 pnpm install
-pnpm run build
-pnpm dsh web
+pnpm run build:windows
 ```
+
+The build downloads a local .NET 8 SDK and Inno Setup when they are unavailable, then writes the portable payload and installer under `.artifacts/desktop/`. See [the desktop application guide](apps/desktop/README.md).
 
 ## Community and support
 

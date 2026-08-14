@@ -12,29 +12,15 @@ We recommend using an agent to explore the codebase and understand its architect
 
 There is no privileged core to patch: you extend dsh by mounting a plugin beside the others, and registrations are effects that unwind when their plugin unloads.
 
-## Profiles and bundles
+## Desktop composition
 
-A running `dsh` is a plugin tree composed at boot from ordered layers.
+The shipped product is the native Windows x64 application under [`apps/desktop`](../apps/desktop/README.md). Its WPF process owns human interaction and starts the bundled Node runtime as a hidden child process. The two processes exchange ACP JSON-RPC over redirected standard input and output; no HTTP server, browser, port, or CLI launcher participates.
 
-A **profile** is a named composition stored in the Harness home. It lists the bundles it stacks, holds any out-of-tree plugins it installs, and keeps the user's own `cordis.patch.yml`. `web` and `headless` ship as templates.
+[`apps/desktop/runtime/cordis.yml`](../apps/desktop/runtime/cordis.yml) is the readable deployment composition. It mounts the DeepSeek adapter, ACP agent bundle, Windows sandbox and PowerShell executor, filesystem and search tools, persistence, compaction, subagents, workflows, goals, jobs, and permission service. ACP creates one scoped Agent for each desktop task.
 
-A **bundle** is a distribution format for Cordis config rows and the code they mount, so whatever it inserts stays patchable by the layers above it.
+The WPF shell stores the API key in Windows Credential Manager and passes it only to the hidden runtime environment. Runtime files and JSONL session data live under per-user application directories. The installer contains a self-contained .NET application, `node.exe`, and a symlink-free deployed package closure.
 
-Each declares itself in its own `package.json` under a `dsh` field: `dsh.profile` lists a profile's bundles, and `dsh.bundle` points at a bundle's patch file.
-
-[`dsh-base`](../packages/bundle/base/README.md) is the first layer of every profile: model adapters, tools, persistence, sandbox and approval policy, settings, credentials, telemetry. [`dsh-web-app`](../packages/bundle/web-app/README.md) adds the browser application; [`dsh-headless`](../packages/bundle/headless/README.md) adds a one-shot runner with no server at all.
-
-Layers apply to an empty entry list in this order: each bundle in the profile's listed order, then the profile's `cordis.patch.yml`, then the home-level one, then any `--patch` overlay. A patch targets a row by id and replaces its whole config, or inserts new rows.
-
-To see the tree your machine actually boots:
-
-```sh
-dsh --profile web --dump-config
-```
-
-Any row it prints can be replaced by a patch of your own.
-
-Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles); config fields are in the generated [config catalog](config-catalog.md).
+The reusable bundle and profile packages remain backend composition utilities for examples and SDK consumers; they are not product launch surfaces in this fork. Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles), and config fields are in the generated [config catalog](config-catalog.md).
 
 ## Core packages
 

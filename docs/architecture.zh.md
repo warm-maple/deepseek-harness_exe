@@ -12,29 +12,15 @@
 
 不存在需要打补丁的特权内核：扩展 dsh 的方式是把插件挂载到其他插件旁边，而各项注册都是副作用，会在其插件卸载时撤销。
 
-## Profile 与组合包
+## 桌面组合
 
-运行中的 `dsh` 是一棵插件树，由启动时按序叠加的各层组合而成。
+已交付的产品是 [`apps/desktop`](../apps/desktop/README.md) 下的原生 Windows x64 应用。其 WPF 进程负责人机交互，并以隐藏子进程方式启动内置 Node 运行时。两个进程通过重定向标准输入输出交换 ACP JSON-RPC；HTTP 服务、浏览器、端口和 CLI 启动器都不参与。
 
-**profile** 是存放在 Harness home 中的具名组装。它列出自己叠放的组合包，存放自己安装的树外插件，并保存用户自己的 `cordis.patch.yml`。`web` 和 `headless` 作为模板随发行版交付。
+[`apps/desktop/runtime/cordis.yml`](../apps/desktop/runtime/cordis.yml) 是可直接阅读的部署组合。它挂载 DeepSeek 适配器、ACP Agent 组合包、Windows 沙箱与 PowerShell 执行器、文件与搜索工具、持久化、上下文压缩、子 Agent、工作流、目标、后台任务和权限服务。ACP 为每个桌面任务创建一个有作用域的 Agent。
 
-**组合包**是 Cordis 配置项及其挂载代码的分发格式，因此它插入的内容始终可被其上各层 patch。
+WPF 外壳把 API Key 存入 Windows 凭据管理器，并且只通过隐藏运行时的环境传入。运行时文件和 JSONL 会话数据位于每用户应用目录。安装程序包含自包含 .NET 应用、`node.exe` 和不含符号链接的已部署包闭包。
 
-两者都在各自的 `package.json` 中通过 `dsh` 字段声明自己：`dsh.profile` 列出一个 profile 的组合包，`dsh.bundle` 指向一个组合包的 patch 文件。
-
-[`dsh-base`](../packages/bundle/base/README.md) 是每个 profile 的第一层：模型适配器、工具、持久化、沙箱与审批策略、设置、凭据、遥测。[`dsh-web-app`](../packages/bundle/web-app/README.md) 增加浏览器应用；[`dsh-headless`](../packages/bundle/headless/README.md) 增加一次性运行器，且完全不带服务器。
-
-各层按此顺序应用在空条目列表之上：先按 profile 列出的顺序应用每个组合包，然后是 profile 的 `cordis.patch.yml`，然后是 home 级的那份，最后是任意 `--patch` overlay。一条 patch 按 id 定位某个条目并替换其整个 config，或插入新条目。
-
-要查看你的机器实际启动的配置树：
-
-```sh
-dsh --profile web --dump-config
-```
-
-它打印出的任何条目，都可以由你自己的 patch 替换。
-
-组装机制见 [app-boot](../packages/boot/app-boot/README.md#profiles)；配置字段见生成的[配置目录](config-catalog.md)。
+可复用的组合包和 profile 包继续作为示例与 SDK 消费方使用的后端组装工具；在这个 fork 中，它们不再是产品启动界面。组装机制见 [app-boot](../packages/boot/app-boot/README.md#profiles)，配置字段见生成的[配置目录](config-catalog.md)。
 
 ## 核心包
 

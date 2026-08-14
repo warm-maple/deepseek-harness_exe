@@ -14,6 +14,7 @@ import {
 import { type GenerateOptions, LlmAdapter, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as AcpPlugin from '../src/index.ts'
 import type { AcpConfig } from '../src/index.ts'
 
@@ -113,10 +114,15 @@ export async function makeBridgeHarness(options: {
   script?: (StreamChunk[] | 'hang')[]
   config?: AcpConfigOverrides
   persona?: string
+  /** Mount a real JSONL persistence backend rooted at this directory. */
+  persistenceRoot?: string
 } = {}): Promise<BridgeHarness> {
   const adapter = new MockAdapter(options.script ?? [])
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx, { systemPrompt: { persona: options.persona ?? '' } })
+  if (options.persistenceRoot !== undefined) {
+    await ctx.plugin(JsonlSessionPersistence, { root: options.persistenceRoot })
+  }
   const loopFiber = await ctx.plugin(AgentLoop, { agents: [] })
   ctx.llm.registerAdapter(['mock'], adapter)
 

@@ -22,7 +22,7 @@ describe('ACP automation output boundary', () => {
     harness = undefined
   })
 
-  it('does not emit tool, terminal, plan, title, or reasoning presentation updates', async () => {
+  it('emits tool cards and text, but not terminal, plan, title, or usage updates', async () => {
     harness = await makeBridgeHarness({ script: [toolCallResponse(), textResponse('done')] })
     harness.ctx.tools.register(defineContentToolFixture({
       name: 'echo',
@@ -34,11 +34,41 @@ describe('ACP automation output boundary', () => {
     const { sessionId } = await harness.client.newSession({ cwd: process.cwd(), mcpServers: [] })
     await harness.client.prompt({ sessionId, prompt: [{ type: 'text', text: 'go' }] })
 
-    await vi.waitFor(() => { expect(harness!.updates).toHaveLength(1) })
-    expect(harness.updates).toEqual([{
-      sessionUpdate: 'agent_message_chunk',
-      content: { type: 'text', text: 'done' },
-    }])
+    await vi.waitFor(() => {
+      expect(harness!.updates.some(update => update.sessionUpdate === 'tool_call')).toBe(true)
+      expect(harness!.updates.some(update => update.sessionUpdate === 'tool_call_update')).toBe(true)
+    })
+    const tool = harness.updates.find(update => update.sessionUpdate === 'tool_call')
+    expect(tool).toMatchObject({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-1',
+      title: 'echo',
+      status: 'in_progress',
+    })
+    const settled = harness.updates.find(update => update.sessionUpdate === 'tool_call_update')
+    expect(settled).toMatchObject({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call-1',
+      status: 'completed',
+    })
+    const text = harness.updates.flatMap(update => (
+      update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text'
+        ? [update.content.text]
+        : []
+    )).join('')
+    expect(text).toBe('done')
+    // Terminal, plan, title, and usage stay off the wire.
+    for (const banned of ['terminal', 'plan', 'plan_update', 'plan_removed', 'session_info_update', 'usage_update']) {
+      expect(harness.updates.some(update => update.sessionUpdate === banned)).toBe(false)
+    }
+  })
+
+  it('rejects session/list and session/load without a persistence service', async () => {
+    harness = await makeBridgeHarness()
+    await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    await expect(harness.client.listSessions({})).rejects.toThrow(/session persistence is not configured/)
+    await expect(harness.client.loadSession({ sessionId: 'missing', cwd: process.cwd(), mcpServers: [] }))
+      .rejects.toThrow(/session persistence is not configured/)
   })
 
   it('ignores events from agents the bridge does not own', async () => {

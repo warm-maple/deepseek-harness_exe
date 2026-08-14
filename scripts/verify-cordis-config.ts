@@ -5,12 +5,12 @@
  * activate, against that plugin context) and the entry `disabled` field (at
  * every mount decision, against the loader context). Every other entry
  * metadata field stays static, so an expression there remains truthy data and
- * silently changes composition. Example configs and the dsh Web composition
+ * silently changes composition. Example configs and the desktop composition
  * resolve named plugins from their owning workspace manifests. Local example
  * packages must also be in the root TypeScript project graph.
  */
 
-import { globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import * as yaml from 'js-yaml'
 import ts from 'typescript'
@@ -31,13 +31,7 @@ interface PluginReference {
 }
 
 const root = resolve(import.meta.dirname, '..')
-// These example files are overlays consumed by the built dsh app, so their bare
-// specifiers resolve from apps/cli rather than the examples workspace.
-const appOverlayFiles = new Set([
-  'examples/web-cordis/cordis.yml',
-  'examples/web-schedule/cordis.yml',
-  ...globSync('examples/mcp-memory/*.cordis.yml', { cwd: root }),
-])
+const appOverlayFiles = new Set<string>()
 const metadataFields = ['id', 'name', 'group', 'inject', 'intercept', 'isolate'] as const
 
 /** The adaptive directory-picker chooser package (mounts a backend row at boot). */
@@ -146,9 +140,9 @@ function validateClientHalvesDeclared(): string[] {
  */
 function validatePresetPlaneSeparation(): string[] {
   const problems: string[] = []
-  // The shipped Web surface is two bundle patch layers over an empty root.
   const hostFile = 'packages/bundle/base/cordis.patch.yml'
   const overlayFile = 'packages/bundle/web-app/cordis.patch.yml'
+  if (!existsSync(resolve(root, overlayFile))) return problems
   const hostRows = rowIds(hostFile)
   const overlay = loadEntries(overlayFile)
   const disabled = new Set<string>()
@@ -260,18 +254,10 @@ function validateExampleResolution(): string[] {
 
 function validateAppResolution(): string[] {
   const violations: string[] = []
-  // App overlays (and any config left under apps/cli/config) resolve from the
-  // dsh app's own dependency surface — the profile module fallback mirrors it.
-  const appDependencies = {
-    ...readManifest('apps/cli/package.json').dependencies,
-    // The fallback also links every bundle's own dependencies (healProfilesModuleFallback).
-    ...Object.fromEntries(globSync('packages/bundle/*/package.json', { cwd: root })
-      .flatMap(file => Object.entries(readManifest(file).dependencies ?? {}))),
-  }
-  const shipped = new Set(globSync('*.cordis.yml', { cwd: resolve(root, 'apps/cli/config') })
-    .map(file => `apps/cli/config/${file}`))
-  const appReferences = pluginReferences.filter(reference => shipped.has(reference.file) || appOverlayFiles.has(reference.file))
-  violations.push(...missingPluginDependencies(appReferences, appDependencies, 'apps/cli/package.json or a bundle manifest'))
+  const desktopManifest = 'distribution/desktop-runtime/package.json'
+  const desktopDependencies = readManifest(desktopManifest).dependencies ?? {}
+  const desktopReferences = pluginReferences.filter(reference => reference.file.startsWith('apps/desktop/'))
+  violations.push(...missingPluginDependencies(desktopReferences, desktopDependencies, desktopManifest))
   // Each bundle's patch rows must resolve from that bundle's own dependencies:
   // per-layer resolution anchors on the bundle package directory.
   for (const manifestPath of globSync('packages/bundle/*/package.json', { cwd: root })) {

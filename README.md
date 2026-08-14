@@ -15,6 +15,13 @@
 
 安装后从开始菜单或桌面快捷方式启动 **DeepSeek Harness**，首次打开按原版方式配置 DeepSeek API Key 即可使用。
 
+### API Key 配置（填写一次，之后自动记忆）
+
+- 打开 **设置 → 模型**，在 DeepSeek 的 **API Key** 输入框填入 Key 并保存。
+- Key 会写入 `%APPDATA%\DeepSeekHarness\.credentials.yaml`（本地凭据文件），**下次启动自动读取，无需重复输入**。
+- 想更换 Key，随时回到设置里修改即可（新值覆盖旧值）。
+- 应用不会读取系统环境变量 `DEEPSEEK_API_KEY`（启动时会清除继承值），避免界面出现只读状态。
+
 > 便携版也可直接使用：仓库 `.artifacts/desktop-web/payload/` 下的 `DeepSeekHarnessWeb.exe`（需连同 `runtime` 文件夹一起保留）。
 
 ### 系统要求

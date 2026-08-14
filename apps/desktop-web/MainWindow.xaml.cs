@@ -87,6 +87,10 @@ public partial class MainWindow : Window
         start.ArgumentList.Add(port.ToString());
         start.Environment["DSH_HOME"] = home;
         start.Environment["DSH_TELEMETRY_DISABLED"] = "1";
+        // 不继承系统的 DEEPSEEK_API_KEY：原版 harness 中环境变量优先且界面只读。
+        // 移除后，API Key 从 Web 设置的「模型」页填写，并写入
+        // %APPDATA%\DeepSeekHarness\.credentials.yaml（可写）。
+        start.Environment.Remove("DEEPSEEK_API_KEY");
 
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         if (!process.Start()) throw new InvalidOperationException("无法启动内置 Web 运行时。");

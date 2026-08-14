@@ -26,8 +26,8 @@ RestartApplications=no
 Source: "C:\dshpkg\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.map,*.d.ts,*.d.mts,*.d.cts,*.tsbuildinfo,*.snap,*.test.js,*.spec.js,*.md,*.markdown"
 
 [Icons]
-Name: "{autoprograms}\DeepSeek Harness"; Filename: "{app}\DeepSeekHarnessWeb.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\DeepSeek Harness"; Filename: "{app}\DeepSeekHarnessWeb.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\DeepSeek Harness"; Filename: "{app}\DeepSeekHarnessWeb.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{autodesktop}\DeepSeek Harness"; Filename: "{app}\DeepSeekHarnessWeb.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked

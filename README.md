@@ -1,48 +1,78 @@
-# DeepSeek Harness
+# DeepSeek Harness · Windows 桌面版（WebView2）
 
-English | [中文](README.zh.md)
+把 **原封不动的 DeepSeek Harness Web 界面**打包成 Windows 桌面程序：**双击 exe 即可使用，无需打开终端或手动启动服务**。
 
-DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek AI](https://deepseek.com).
+- 界面、功能与源项目 harness Web 版 **100% 一致**（对话、Markdown、工具调用、Agent 预设、设置、API Key onboarding 等全在 Web 端）。
+- 应用启动时自动拉起内置 Node 运行原版 harness Web 服务（监听本机随机端口），并用 **Edge WebView2** 在窗口内加载；关闭窗口自动结束后台进程。
 
-It uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
+## 下载与安装
 
-## Developer preview
+前往 [Releases](https://github.com/warm-maple/deepseek-harness_exe/releases) 下载最新安装包：
 
-DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
+| 文件 | 说明 |
+|---|---|
+| `DeepSeekHarnessWeb-Setup-<版本>-x64.exe` | 单文件安装器（推荐） |
 
-## Windows desktop app
+安装后从开始菜单或桌面快捷方式启动 **DeepSeek Harness**，首次打开按原版方式配置 DeepSeek API Key 即可使用。
 
-This fork ships DeepSeek Harness as a native Windows x64 desktop Agent. It does not start a browser, HTTP server, or visible command window. The bundled background runtime communicates with the WPF application over ACP JSON-RPC stdio.
+> 便携版也可直接使用：仓库 `.artifacts/desktop-web/payload/` 下的 `DeepSeekHarnessWeb.exe`（需连同 `runtime` 文件夹一起保留）。
 
-Install the current build with `.artifacts/desktop/DeepSeekHarness-Setup-0.1.0-x64.exe`. On first launch, open Settings, save a DeepSeek API key, choose a workspace, and start a task. The key is stored in Windows Credential Manager.
+### 系统要求
 
-To rebuild the self-contained application and installer:
+- Windows 10 / 11（x64）
+- Edge WebView2 Runtime（Windows 10/11 一般已内置；缺失时会提示安装）
+
+## 工作原理
+
+```
+双击 DeepSeekHarnessWeb.exe
+  ├─ 1. 探测本机空闲端口
+  ├─ 2. 启动内置 node：node_modules/@deepseek-ai/dsh/lib/bin.js web --port <端口>
+  ├─ 3. 轮询 http://127.0.0.1:<端口> 就绪
+  ├─ 4. WebView2 窗口加载该地址（原版 harness Web 界面）
+  └─ 关闭窗口 → taskkill /T /F 结束整棵 Node 进程树
+```
+
+- 会话、凭据等持久化在 `%APPDATA%\DeepSeekHarness`（DSH_HOME）。
+- Web 服务只监听 `127.0.0.1`，不对外暴露。
+
+## 代码结构
+
+```
+apps/desktop-web/                 WebView2 壳（C# / WPF）
+├── DeepSeekHarnessWeb.csproj     WinExe + Microsoft.Web.WebView2
+├── MainWindow.xaml(.cs)          窗口 + 启动/关闭 Node 生命周期
+├── app.ico                       应用图标
+└── installer/DeepSeekHarnessWeb.iss   Inno Setup 安装脚本
+```
+
+## 重新构建
+
+**1. 构建原版 Web 运行时**（在源项目完整源码目录，如 `E:\deepseek-harness_exe-master`）：
 
 ```powershell
 pnpm install
-pnpm run build:windows
+pnpm run build:lib:host
+pnpm run build:lib:client
+pnpm run build:web
 ```
 
-The build downloads a local .NET 8 SDK and Inno Setup when they are unavailable, then writes the portable payload and installer under `.artifacts/desktop/`. See [the desktop application guide](apps/desktop/README.md).
+用 `distribution/web-runtime/package.json` 通过 `pnpm --filter dsh-web-runtime deploy --legacy --prod` 物化运行时（含补齐 peer 依赖、`apps/cli`、`apps/web/dist`、`node.exe`），并清理嵌套 `node_modules` 以规避安装器 260 字符路径限制。
 
-## Community and support
+**2. 发布壳并打包**：
 
-- Feel free to submit feedback or bug reports through [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).
-- Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository for discoverability.
-- Join <a href="https://discord.gg/Ycq5dCaS4">DeepSeek Harness Discord community</a>.
+```powershell
+dotnet publish apps/desktop-web/DeepSeekHarnessWeb.csproj -c Release -r win-x64 --self-contained true -o .artifacts/desktop-web/payload
+# 把上一步的 web 运行时复制为 .artifacts/desktop-web/payload/runtime
+# 再用 ISCC 编译 apps/desktop-web/installer/DeepSeekHarnessWeb.iss 生成安装器
+```
 
-## Contributing
+## 常见问题
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **首次启动较慢（5–20 秒）**：应用需要启动内置 Node 并加载 Web 前端，属正常现象。
+- **SmartScreen 提示"未知发布者"**：安装包尚未代码签名，点击"更多信息 → 仍要运行"即可。
+- **打开后是空白/错误页**：确认系统已安装 Edge WebView2 Runtime。
 
-## Development
+## 与源项目的关系
 
-Start with the [development guide](docs/development.md) and [architecture documentation](docs/architecture.md).
-
-For agents, follow [AGENTS.md](AGENTS.md).
-
-## License
-
-[MIT](LICENSE)
-
-Third-party dependencies and their licenses are disclosed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+本仓库是 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 fork，仅新增 `apps/desktop-web` 桌面壳与打包脚本；**Web 界面与 Agent 功能全部来自原项目，未做改动**。源项目相关文档见 [README 原文](https://github.com/deepseek-ai/deepseek-harness)。

@@ -1,35 +1,48 @@
-# DeepSeek Harness Web 桌面壳（WebView2）
+# DeepSeek Harness Web desktop shell (WebView2)
 
-本目录是 DeepSeek Harness **Windows 桌面版**的 WebView2 壳：把源项目原版 harness Web 界面原封不动地嵌进原生窗口，双击即用、无需终端。
+English | [中文](README.zh.md)
 
-## 文件
+This directory contains the Windows desktop shell for the original DeepSeek Harness Web interface. The self-contained WPF executable starts the bundled Node runtime without a console, embeds the interface in WebView2, and stops the runtime when the window closes.
 
-| 文件 | 职责 |
+## Files
+
+| File | Responsibility |
 |---|---|
-| DeepSeekHarnessWeb.csproj | Windows x64 自包含 WinExe，引用 Microsoft.Web.WebView2 |
-| MainWindow.xaml / MainWindow.xaml.cs | 窗口；探测端口 → 启动内置 Node（原版 dsh web）→ WebView2 加载 → 关闭时结束进程树 |
-| app.ico | 应用图标（用户提供 PNG 转多尺寸 ICO） |
-| installer/DeepSeekHarnessWeb.iss | Inno Setup 单文件安装器脚本 |
+| `DeepSeekHarnessWeb.csproj` | Windows x64 self-contained `WinExe` with Microsoft WebView2 |
+| `MainWindow.xaml` / `MainWindow.xaml.cs` | Window, bundled runtime startup, readiness checks, WebView2 navigation, and process-tree shutdown |
+| `app-icon.png` / `generate-icon.ps1` | Source artwork and deterministic ImageMagick conversion |
+| `app.ico` | Generated 16, 24, 32, 48, 64, 128, and 256 pixel Windows icon |
+| `tests/` | Startup-announcement trust checks and ICO directory validation |
+| `installer/DeepSeekHarnessWeb.iss` | Inno Setup single-file installer definition |
 
-## 使用
+## Use
 
-1. 从 GitHub Releases 下载 DeepSeekHarnessWeb-Setup-*-x64.exe 安装。
-2. 启动 DeepSeek Harness，按原版 Web 界面的 onboarding 配置 API Key。
+1. Download and install `DeepSeekHarnessWeb-Setup-*-x64.exe` from GitHub Releases.
+2. Start DeepSeek Harness and configure the API key through the original Web onboarding flow.
 
-## 构建
+## Build
 
 ```powershell
-# 1. 发布壳
+# Verify startup parsing and the committed icon.
+dotnet test apps/desktop-web/tests/DeepSeekHarnessWeb.Tests.csproj -c Release
+
+# Publish the shell.
 dotnet publish apps/desktop-web/DeepSeekHarnessWeb.csproj -c Release -r win-x64 --self-contained true -o .artifacts/desktop-web/payload
 
-# 2. 把构建好的原版 Web 运行时复制为 payload/runtime（见 WINDOWS_DESKTOP_MODIFICATION.md）
-
-# 3. 编译安装器
+# Copy the built original Web runtime to payload/runtime (see WINDOWS_DESKTOP_MODIFICATION.md), then compile the installer.
 & .artifacts/tools/inno/ISCC.exe /DAppVersion=0.2.0 apps/desktop-web/installer/DeepSeekHarnessWeb.iss
 ```
 
-## 运行时说明
+Regenerate `app.ico` after changing the source artwork:
 
-- 内置 Node 运行 node_modules/@deepseek-ai/dsh/lib/bin.js web --port <随机端口>，Web 服务只监听 127.0.0.1。
-- 数据（会话/凭据）持久化在 %APPDATA%\DeepSeekHarness。
-- 运行时打包与裁剪细节见根目录 WINDOWS_DESKTOP_MODIFICATION.md。
+```powershell
+pwsh -File apps/desktop-web/generate-icon.ps1
+```
+
+## Runtime behavior
+
+- The shell runs `node_modules/@deepseek-ai/dsh/lib/bin.js web --port 0`. Node owns the ephemeral port allocation, and the shell accepts only the exact `http://127.0.0.1:<port>` URL announced by `dsh web` before probing it for readiness.
+- A runtime exit or startup timeout reports the exit code and a bounded tail of stdout and stderr instead of hiding the underlying failure.
+- WebView2 stores its browser data under `%LOCALAPPDATA%\DeepSeekHarness\WebView2`; the installer excludes any adjacent `DeepSeekHarnessWeb.exe.WebView2` directory created on a build machine.
+- Sessions and credentials persist under `%APPDATA%\DeepSeekHarness`.
+- Runtime packaging and pruning are documented in [the Windows desktop distribution reference](../../WINDOWS_DESKTOP_MODIFICATION.md).

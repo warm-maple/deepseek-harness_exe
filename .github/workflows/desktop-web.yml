@@ -1,0 +1,36 @@
+name: Desktop Web shell
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop-web/**'
+      - '.github/workflows/desktop-web.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'apps/desktop-web/**'
+      - '.github/workflows/desktop-web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-publish:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test shell startup and icon contracts
+        run: dotnet test apps/desktop-web/tests/DeepSeekHarnessWeb.Tests.csproj --configuration Release
+
+      - name: Publish self-contained shell
+        run: dotnet publish apps/desktop-web/DeepSeekHarnessWeb.csproj --configuration Release --runtime win-x64 --self-contained true --output .artifacts/desktop-web-shell
+
+      - name: Check published shortcut icon
+        run: if (-not (Test-Path .artifacts/desktop-web-shell/app.ico)) { throw 'Published app.ico is missing' }

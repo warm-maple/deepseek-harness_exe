@@ -14,11 +14,11 @@ There is no privileged core to patch: you extend dsh by mounting a plugin beside
 
 ## Desktop composition
 
-The shipped product is the native Windows x64 application under [`apps/desktop`](../apps/desktop/README.md). Its WPF process owns human interaction and starts the bundled Node runtime as a hidden child process. The two processes exchange ACP JSON-RPC over redirected standard input and output; no HTTP server, browser, port, or CLI launcher participates.
+The shipped product is the Windows x64 application under [`apps/desktop-web`](../apps/desktop-web/README.md). Its self-contained WPF process starts the bundled Node runtime as a hidden child process and embeds the original Web interface in WebView2. Node binds an ephemeral loopback port, announces its URL over stdout, and serves the browser client inside the application window.
 
-[`apps/desktop/runtime/cordis.yml`](../apps/desktop/runtime/cordis.yml) is the readable deployment composition. It mounts the DeepSeek adapter, ACP agent bundle, Windows sandbox and PowerShell executor, filesystem and search tools, persistence, compaction, subagents, workflows, goals, jobs, and permission service. ACP creates one scoped Agent for each desktop task.
+The Node child launches the ordinary `dsh web` composition, so the desktop product retains the Web client's interface, onboarding, settings, and Agent capabilities instead of maintaining a second client protocol. The WPF shell owns only runtime startup, readiness, WebView2 navigation, and process-tree shutdown.
 
-The WPF shell stores the API key in Windows Credential Manager and passes it only to the hidden runtime environment. Runtime files and JSONL session data live under per-user application directories. The installer contains a self-contained .NET application, `node.exe`, and a symlink-free deployed package closure.
+Sessions and credentials live under `%APPDATA%\DeepSeekHarness`, while WebView2 browser data lives under `%LOCALAPPDATA%\DeepSeekHarness\WebView2`. The installer contains the self-contained .NET shell, `node.exe`, and a symlink-free deployed package closure; it excludes browser data produced while assembling the installer.
 
 The reusable bundle and profile packages remain backend composition utilities for examples and SDK consumers; they are not product launch surfaces in this fork. Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles), and config fields are in the generated [config catalog](config-catalog.md).
 

@@ -1,26 +1,34 @@
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Net;
 using System.Net.Http;
-using System.Windows;
-using System.Net.Sockets;
 using System.Text;
+using System.Windows;
+using System.Windows.Media.Imaging;
+using Microsoft.Web.WebView2.Core;
 
 namespace DeepSeekHarness.Web;
 
 public partial class MainWindow : Window
 {
+    private const string ServerAnnouncementPrefix = "dsh web: ";
+    private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan ProbeInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(10);
+
     private Process? _node;
-    private int _port;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly RuntimeOutputTail _runtimeOutput = new(20);
+    private bool _closing;
 
     public MainWindow()
     {
         InitializeComponent();
         var iconPath = Path.Combine(AppContext.BaseDirectory, "app.ico");
-        if (File.Exists(iconPath))
+        using (var iconStream = File.OpenRead(iconPath))
         {
-            Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(iconPath));
+            Icon = BitmapFrame.Create(iconStream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         }
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
@@ -30,12 +38,22 @@ public partial class MainWindow : Window
     {
         try
         {
-            _port = FindFreePort();
-            _node = StartNode(_port);
-            var ready = await WaitForServerAsync(_port, _lifetime.Token);
-            if (!ready) throw new InvalidOperationException("内置 Web 服务未能启动。");
-            await Browser.EnsureCoreWebView2Async();
-            Browser.CoreWebView2.Navigate($"http://127.0.0.1:{_port}");
+            var runtime = StartNode();
+            _node = runtime.Process;
+            var serverUri = await WaitForServerAsync(runtime, _lifetime.Token);
+            var webViewData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DeepSeekHarness",
+                "WebView2");
+            Directory.CreateDirectory(webViewData);
+            var webViewEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewData);
+            await Browser.EnsureCoreWebView2Async(webViewEnvironment);
+            if (_lifetime.IsCancellationRequested) return;
+            Browser.CoreWebView2.Navigate(serverUri.AbsoluteUri);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Window shutdown owns this cancellation and does not surface a startup error.
         }
         catch (Exception error)
         {
@@ -44,16 +62,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static int FindFreePort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
-    }
-
-    private Process StartNode(int port)
+    private RuntimeStart StartNode()
     {
         var runtime = Path.Combine(AppContext.BaseDirectory, "runtime");
         var node = Path.Combine(runtime, "node.exe");
@@ -84,52 +93,111 @@ public partial class MainWindow : Window
         start.ArgumentList.Add(bin);
         start.ArgumentList.Add("web");
         start.ArgumentList.Add("--port");
-        start.ArgumentList.Add(port.ToString());
+        start.ArgumentList.Add("0");
         start.Environment["DSH_HOME"] = home;
         start.Environment["DSH_TELEMETRY_DISABLED"] = "1";
-        // 不继承系统的 DEEPSEEK_API_KEY：原版 harness 中环境变量优先且界面只读。
-        // 移除后，API Key 从 Web 设置的「模型」页填写，并写入
-        // %APPDATA%\DeepSeekHarness\.credentials.yaml（可写）。
+        // The web Models page owns a writable credential; an inherited value would make it read-only.
         start.Environment.Remove("DEEPSEEK_API_KEY");
 
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
-        if (!process.Start()) throw new InvalidOperationException("无法启动内置 Web 运行时。");
+        var announcedUri = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
         process.ErrorDataReceived += (_, args) =>
         {
-            if (!string.IsNullOrWhiteSpace(args.Data)) System.Diagnostics.Debug.WriteLine($"[runtime] {args.Data}");
+            if (string.IsNullOrWhiteSpace(args.Data)) return;
+            _runtimeOutput.Add("stderr", args.Data);
+            Debug.WriteLine($"[runtime] {args.Data}");
         };
-        process.BeginErrorReadLine();
         process.OutputDataReceived += (_, args) =>
         {
-            if (!string.IsNullOrWhiteSpace(args.Data)) System.Diagnostics.Debug.WriteLine($"[runtime] {args.Data}");
+            if (string.IsNullOrWhiteSpace(args.Data)) return;
+            _runtimeOutput.Add("stdout", args.Data);
+            Debug.WriteLine($"[runtime] {args.Data}");
+            if (TryParseAnnouncedUri(args.Data, out var uri)) announcedUri.TrySetResult(uri);
         };
+        if (!process.Start()) throw new InvalidOperationException("无法启动内置 Web 运行时。");
+        process.BeginErrorReadLine();
         process.BeginOutputReadLine();
-        return process;
+        return new RuntimeStart(process, announcedUri.Task);
     }
 
-    private static async Task<bool> WaitForServerAsync(int port, CancellationToken token)
+    internal static bool TryParseAnnouncedUri(string line, out Uri uri)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        var deadline = DateTime.UtcNow.AddSeconds(90);
-        while (DateTime.UtcNow < deadline && !token.IsCancellationRequested)
-        {
-            try
-            {
-                using var response = await client.GetAsync($"http://127.0.0.1:{port}", token);
-                if (response.IsSuccessStatusCode) return true;
-            }
-            catch
-            {
-                // 服务尚未就绪，稍后重试。
-            }
-            await Task.Delay(500, token);
-        }
-        return false;
+        uri = null!;
+        if (!line.StartsWith(ServerAnnouncementPrefix, StringComparison.Ordinal)) return false;
+        var remainder = line[ServerAnnouncementPrefix.Length..].Trim();
+        var separator = remainder.IndexOf(' ');
+        var candidateText = separator < 0 ? remainder : remainder[..separator];
+        const string loopbackPrefix = "http://127.0.0.1:";
+        if (!candidateText.StartsWith(loopbackPrefix, StringComparison.Ordinal)) return false;
+        if (!int.TryParse(
+                candidateText.AsSpan(loopbackPrefix.Length),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var port) || port is < 1 or > 65_535) return false;
+        if (!Uri.TryCreate(candidateText, UriKind.Absolute, out var candidate)) return false;
+        if (candidate.Port != port) return false;
+        uri = candidate;
+        return true;
     }
 
-    private bool _closing;
+    private async Task<Uri> WaitForServerAsync(RuntimeStart runtime, CancellationToken token)
+    {
+        using var startup = CancellationTokenSource.CreateLinkedTokenSource(token);
+        startup.CancelAfter(StartupTimeout);
+        try
+        {
+            var exitTask = runtime.Process.WaitForExitAsync(startup.Token);
+            var announcementTask = runtime.AnnouncedUri.WaitAsync(startup.Token);
+            var first = await Task.WhenAny(announcementTask, exitTask);
+            if (first == exitTask)
+            {
+                await exitTask;
+                runtime.Process.WaitForExit();
+                throw RuntimeExited(runtime.Process);
+            }
 
-    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+            var uri = await announcementTask;
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            while (true)
+            {
+                startup.Token.ThrowIfCancellationRequested();
+                if (runtime.Process.HasExited)
+                {
+                    runtime.Process.WaitForExit();
+                    throw RuntimeExited(runtime.Process);
+                }
+                try
+                {
+                    using var response = await client.GetAsync(uri, startup.Token);
+                    if (response.IsSuccessStatusCode) return uri;
+                }
+                catch (HttpRequestException)
+                {
+                    // The listener can announce its port before the frontend fallback is ready.
+                }
+                catch (TaskCanceledException) when (!startup.IsCancellationRequested)
+                {
+                    // One HTTP probe timed out while the overall startup deadline remains active.
+                }
+                await Task.Delay(ProbeInterval, startup.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException(RuntimeFailure("内置 Web 服务在 90 秒内未能启动。"));
+        }
+    }
+
+    private InvalidOperationException RuntimeExited(Process process) =>
+        new(RuntimeFailure($"内置 Web 运行时提前退出（退出码 {process.ExitCode}）。"));
+
+    private string RuntimeFailure(string message)
+    {
+        var output = _runtimeOutput.Snapshot();
+        return output.Length == 0 ? message : $"{message}\n\n最近的运行时日志：\n{output}";
+    }
+
+    private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_closing) return;
         e.Cancel = true;
@@ -140,31 +208,78 @@ public partial class MainWindow : Window
         Close();
     }
 
-    /// <summary>结束内置 node 的整棵进程树（web 服务及其子进程）。</summary>
+    /// <summary>Stops the bundled Node process tree and waits for its root process to exit.</summary>
     private async Task KillNodeAsync()
     {
-        var node = _node;
-        _node = null;
-        if (node is null || node.HasExited) return;
+        var node = Interlocked.Exchange(ref _node, null);
+        if (node is null) return;
         try
         {
-            var psi = new ProcessStartInfo("taskkill")
+            if (!node.HasExited) node.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the HasExited check and Kill.
+        }
+        catch (Win32Exception error)
+        {
+            Debug.WriteLine($"[runtime] Process.Kill failed; falling back to taskkill: {error.Message}");
+            var start = new ProcessStartInfo("taskkill")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
             };
-            psi.ArgumentList.Add("/PID");
-            psi.ArgumentList.Add(node.Id.ToString());
-            psi.ArgumentList.Add("/T");
-            psi.ArgumentList.Add("/F");
-            var task = Process.Start(psi);
-            if (task is not null) await task.WaitForExitAsync();
+            start.ArgumentList.Add("/PID");
+            start.ArgumentList.Add(node.Id.ToString());
+            start.ArgumentList.Add("/T");
+            start.ArgumentList.Add("/F");
+            using var taskkill = Process.Start(start);
+            if (taskkill is not null) await taskkill.WaitForExitAsync();
         }
-        catch
+        try
         {
-            // 进程可能已经退出；尽力而为即可。
+            await node.WaitForExitAsync().WaitAsync(ShutdownTimeout);
+        }
+        catch (TimeoutException)
+        {
+            Debug.WriteLine("[runtime] Node process did not exit within the shutdown deadline.");
+        }
+        finally
+        {
+            node.Dispose();
+        }
+    }
+
+    private readonly record struct RuntimeStart(Process Process, Task<Uri> AnnouncedUri);
+
+    private sealed class RuntimeOutputTail
+    {
+        private const int MaximumLineLength = 1_000;
+        private readonly int _capacity;
+        private readonly Queue<string> _lines = new();
+        private readonly object _lock = new();
+
+        public RuntimeOutputTail(int capacity)
+        {
+            _capacity = capacity;
+        }
+
+        public void Add(string stream, string line)
+        {
+            var text = line.Length <= MaximumLineLength ? line : $"{line[..MaximumLineLength]}…";
+            lock (_lock)
+            {
+                _lines.Enqueue($"[{stream}] {text}");
+                while (_lines.Count > _capacity) _lines.Dequeue();
+            }
+        }
+
+        public string Snapshot()
+        {
+            lock (_lock)
+            {
+                return string.Join(Environment.NewLine, _lines);
+            }
         }
     }
 }

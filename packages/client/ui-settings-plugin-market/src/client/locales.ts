@@ -1,0 +1,68 @@
+/** Copy dictionaries for the plugin marketplace Settings tab. */
+
+/** Simplified Chinese dictionary and key source of truth. */
+export const zh = {
+  tab: '插件市场',
+  search: '搜索市场',
+  searchPlaceholder: '输入关键词或包名（如 dsh-plugin-hello）',
+  searching: '正在搜索…',
+  empty: '市场暂无结果。发布插件时在 package.json 加 keywords: ["dsh-plugin"] 即可上架。',
+  emptySearch: '没有匹配的插件。',
+  error: '暂时无法访问插件市场。',
+  retry: '重试',
+  refresh: '刷新',
+  install: '安装',
+  installing: '安装中…',
+  uninstall: '卸载',
+  uninstalling: '卸载中…',
+  installedTag: '已安装',
+  version: '版本',
+  publisher: '发布者',
+  updated: '更新于',
+  viewNpm: 'npm 页面',
+  restartHint: '安装完成；重启应用后插件完全生效。',
+  uninstalledHint: '已卸载。',
+  installedHeading: '已安装的依赖',
+  installedEmpty: '当前 profile 没有额外依赖。',
+  loaderOn: '已挂载',
+  loaderOff: '未挂载',
+  libraryTag: '库',
+  bundleTag: 'bundle',
+  pluginTag: '插件',
+  actionFailed: '操作失败：{message}',
+} satisfies Record<string, string>
+
+/** Plugin market locale key union. */
+export type PluginMarketLocaleKey = keyof typeof zh
+
+/** English dictionary checked against the Chinese key set. */
+export const en = {
+  tab: 'Marketplace',
+  search: 'Search the market',
+  searchPlaceholder: 'Keywords or a package name (e.g. dsh-plugin-hello)',
+  searching: 'Searching…',
+  empty: 'No results yet. Publish a plugin with keywords: ["dsh-plugin"] in package.json to list it.',
+  emptySearch: 'No matching plugins.',
+  error: 'The plugin market is temporarily unavailable.',
+  retry: 'Retry',
+  refresh: 'Refresh',
+  install: 'Install',
+  installing: 'Installing…',
+  uninstall: 'Uninstall',
+  uninstalling: 'Uninstalling…',
+  installedTag: 'Installed',
+  version: 'Version',
+  publisher: 'Publisher',
+  updated: 'Updated',
+  viewNpm: 'npm page',
+  restartHint: 'Installed; restart the app for the plugin to take full effect.',
+  uninstalledHint: 'Uninstalled.',
+  installedHeading: 'Installed dependencies',
+  installedEmpty: 'This profile has no extra dependencies.',
+  loaderOn: 'Mounted',
+  loaderOff: 'Not mounted',
+  libraryTag: 'library',
+  bundleTag: 'bundle',
+  pluginTag: 'plugin',
+  actionFailed: 'Action failed: {message}',
+} satisfies Record<PluginMarketLocaleKey, string>

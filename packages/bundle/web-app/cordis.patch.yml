@@ -100,6 +100,10 @@
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
 
+    # Marketplace Remote: npm search plus profile-scoped install/uninstall.
+    - id: plugin-market
+      name: '@deepseek-ai/dsh-host-plugin-market'
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
@@ -205,6 +209,9 @@
 
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+
+    - id: ui-settings-plugin-market
+      name: '@deepseek-ai/dsh-client-ui-settings-plugin-market'
 
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'

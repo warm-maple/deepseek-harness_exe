@@ -38,18 +38,35 @@ public partial class MainWindow : Window
     {
         try
         {
-            var runtime = StartNode();
-            _node = runtime.Process;
-            var serverUri = await WaitForServerAsync(runtime, _lifetime.Token);
-            var webViewData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DeepSeekHarness",
-                "WebView2");
-            Directory.CreateDirectory(webViewData);
-            var webViewEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewData);
-            await Browser.EnsureCoreWebView2Async(webViewEnvironment);
-            if (_lifetime.IsCancellationRequested) return;
-            Browser.CoreWebView2.Navigate(serverUri.AbsoluteUri);
+            // One silent relaunch covers transient early exits right after an
+            // upgrade (antivirus scans over freshly installed files, the module
+            // fallback farm being re-pointed mid-boot): the second attempt starts
+            // from the same on-disk state a manual relaunch would see.
+            for (var attempt = 1; ; attempt += 1)
+            {
+                var runtime = StartNode();
+                _node = runtime.Process;
+                try
+                {
+                    var serverUri = await WaitForServerAsync(runtime, _lifetime.Token);
+                    var webViewData = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "DeepSeekHarness",
+                        "WebView2");
+                    Directory.CreateDirectory(webViewData);
+                    var webViewEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: webViewData);
+                    await Browser.EnsureCoreWebView2Async(webViewEnvironment);
+                    if (_lifetime.IsCancellationRequested) return;
+                    Browser.CoreWebView2.Navigate(serverUri.AbsoluteUri);
+                    return;
+                }
+                catch (InvalidOperationException error) when (attempt == 1 && IsEarlyExit(error))
+                {
+                    _runtimeOutput.Add("shell", $"runtime exited at startup, retrying once: {error.Message}");
+                    await KillNodeAsync();
+                    await Task.Delay(TimeSpan.FromSeconds(2), _lifetime.Token);
+                }
+            }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -61,6 +78,10 @@ public partial class MainWindow : Window
             Close();
         }
     }
+
+    /// <summary>Whether the startup error is the runtime exiting by itself (retryable).</summary>
+    internal static bool IsEarlyExit(InvalidOperationException error) =>
+        error.Message.Contains("提前退出", StringComparison.Ordinal);
 
     private RuntimeStart StartNode()
     {

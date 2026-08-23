@@ -8,7 +8,7 @@
     <AssemblyName>DeepSeekHarnessWeb</AssemblyName>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <RootNamespace>DeepSeekHarness.Web</RootNamespace>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>

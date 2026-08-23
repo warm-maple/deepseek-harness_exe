@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.0"
+  #define AppVersion "0.3.1"
 #endif
 
 [Setup]
@@ -34,3 +34,16 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Run]
 Filename: "{app}\DeepSeekHarnessWeb.exe"; Description: "启动 DeepSeek Harness"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // Upgrades from 0.2.x land in the previous {app}: purge the old runtime (and
+  // the pre-0.2.1 WebView2 cache that lived beside the exe) so stale files
+  // cannot linger beside the new payload. User data in %APPDATA% is untouched.
+  if CurStep = ssInstall then
+  begin
+    DelTree(ExpandConstant('{app}\runtime'), True, True, True);
+    DelTree(ExpandConstant('{app}\DeepSeekHarnessWeb.exe.WebView2'), True, True, True);
+  end;
+end;

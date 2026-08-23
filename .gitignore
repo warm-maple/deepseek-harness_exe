@@ -39,3 +39,10 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+
+# Materialized pnpm deploy output of distribution/web-runtime (desktop build input)
+.web-runtime/
+
+# .NET build outputs of the desktop-web shell
+**/bin/
+**/obj/

@@ -8,6 +8,8 @@ public sealed class RuntimeStartupTests
     [Theory]
     [InlineData("dsh web: http://127.0.0.1:49152", "http://127.0.0.1:49152/")]
     [InlineData("dsh web: http://127.0.0.1:49153 (LAN: http://192.168.1.2:49153)", "http://127.0.0.1:49153/")]
+    [InlineData("dsh web: http://127.0.0.1:49154/?token=abc123", "http://127.0.0.1:49154/?token=abc123")]
+    [InlineData("dsh web: http://127.0.0.1:49155/?token=abc123 (LAN: http://192.168.1.2:49155/?token=abc123)", "http://127.0.0.1:49155/?token=abc123")]
     public void ParsesLoopbackServerAnnouncements(string line, string expected)
     {
         Assert.True(MainWindow.TryParseAnnouncedUri(line, out var uri));
@@ -17,9 +19,8 @@ public sealed class RuntimeStartupTests
     [Theory]
     [InlineData("dsh web: http://127.0.0.1:0")]
     [InlineData("dsh web: http://127.0.0.1")]
-    [InlineData("dsh web: http://127.0.0.1:49152/other")]
-    [InlineData("dsh web: http://user@127.0.0.1:49152")]
     [InlineData("dsh web: http://127.0.0.1:65536")]
+    [InlineData("dsh web: http://user@127.0.0.1:49152")]
     [InlineData("dsh web: https://127.0.0.1:49152")]
     [InlineData("dsh web: http://localhost:49152")]
     [InlineData("dsh web: http://192.168.1.2:49152")]

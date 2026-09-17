@@ -150,15 +150,16 @@ public partial class MainWindow : Window
         var remainder = line[ServerAnnouncementPrefix.Length..].Trim();
         var separator = remainder.IndexOf(' ');
         var candidateText = separator < 0 ? remainder : remainder[..separator];
-        const string loopbackPrefix = "http://127.0.0.1:";
-        if (!candidateText.StartsWith(loopbackPrefix, StringComparison.Ordinal)) return false;
-        if (!int.TryParse(
-                candidateText.AsSpan(loopbackPrefix.Length),
-                System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var port) || port is < 1 or > 65_535) return false;
+        // Since dsh 0.1.5 the announced URL carries a process token as a query
+        // string (?token=…); the WebView2 must navigate to the full URL so the
+        // /api trust fence accepts the browser session.
         if (!Uri.TryCreate(candidateText, UriKind.Absolute, out var candidate)) return false;
-        if (candidate.Port != port) return false;
+        if (candidate.Scheme != Uri.UriSchemeHttp) return false;
+        if (candidate.HostNameType != UriHostNameType.IPv4 || candidate.Host != "127.0.0.1") return false;
+        if (!string.IsNullOrEmpty(candidate.UserInfo)) return false;
+        // An explicit port is required: a portless URL would mean port 80.
+        if (!candidate.Authority.Contains(':', StringComparison.Ordinal)) return false;
+        if (candidate.Port is < 1 or > 65_535) return false;
         uri = candidate;
         return true;
     }
